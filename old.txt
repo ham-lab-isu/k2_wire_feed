@@ -1,0 +1,120 @@
+cmake_minimum_required(VERSION 3.8)
+project(k2_wire_feed)
+
+set(CMAKE_CXX_STANDARD 14)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# find dependencies
+set(HW_IF_INCLUDE_DEPENDS
+  pluginlib
+  rcpputils
+  urdf
+  builtin_interfaces
+  std_msgs
+)
+set(REF_GEN_INCLUDE_DEPENDS
+  rclcpp
+  rclcpp_action
+  rclpy
+  action_msgs 
+  rosidl_default_generators
+)
+set(CONTROLLER_INCLUDE_DEPENDS
+  pluginlib
+  rcpputils
+  realtime_tools
+)
+
+# find dependencies
+find_package(ament_cmake REQUIRED)
+
+foreach(Dependency IN ITEMS ${HW_IF_INCLUDE_DEPENDS})
+  find_package(${Dependency} REQUIRED)
+endforeach()
+foreach(Dependency IN ITEMS ${REF_GEN_INCLUDE_DEPENDS})
+  find_package(${Dependency} REQUIRED)
+endforeach()
+foreach(Dependency IN ITEMS ${CONTROLLER_INCLUDE_DEPENDS})
+  find_package(${Dependency} REQUIRED)
+endforeach()
+
+include_directories(
+  include
+  ${ament_INCLUDE_DIRS}
+)
+
+# generate the action interface
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "action/WireFeed.action"
+  DEPENDENCIES action_msgs
+)
+
+# add an executable, target the dependencies
+add_executable(k2_wf src/k2_wire_feed.cpp)
+add_library(supervisor src/Supervisor.cpp)
+add_library(axis src/Axis.cpp)
+target_link_libraries(k2_wf PUBLIC supervisor axis)
+ament_target_dependencies(k2_wf PUBLIC ${HW_IF_INCLUDE_DEPENDS} ${CONTROLLER_INCLUDE_DEPENDS} ${REF_GEN_INCLUDE_DEPENDS})
+rosidl_target_interfaces(k2_wf ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
+# This defines the sFoundation shared library which can then be called as ${krnx_LIBRARIES}
+find_library(sF_LIBRARIES libsFoundation20.so PATHS ${PROJECT_SOURCE_DIR}/lib/)
+find_library(thread_LIBRARIES libpthread.so.0 PATHS /usr/lib/x86_64-linux-gnu)
+
+message("Found sFoundation library at ${sF_LIBRARIES}")
+
+target_compile_features(k2_wf PUBLIC cxx_std_17)
+target_include_directories(k2_wf PUBLIC
+$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+$<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+)
+
+# these handle connecting the libraries and executables to library objects (.so files, for example)
+target_link_libraries(k2_wf PUBLIC ${sF_LIBRARIES} ${thread_LIBRARIES})
+
+# INSTALL
+install(
+  DIRECTORY include/
+  DESTINATION include/${PROJECT_NAME}
+)
+install(
+  DIRECTORY action/
+  DESTINATION include/${PROJECT_NAME}
+)
+install(
+  DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}
+)
+install(
+  TARGETS k2_wf
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
+install(FILES ${sF_LIBRARIES} ${thread_LIBRARIES}
+  DESTINATION lib
+)
+install(
+  DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_cpp
+  DESTINATION include/${PROJECT_NAME}
+)
+install(
+  DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install the library
+install(TARGETS k2_wf
+  EXPORT export_k2_wf
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+## EXPORTS
+ament_export_targets(export_k2_wf HAS_LIBRARY_TARGET)
+ament_export_dependencies(${HW_IF_INCLUDE_DEPENDS} ${REF_GEN_INCLUDE_DEPENDS} ${CONTROLLER_INCLUDE_DEPENDS})
+ament_export_dependencies(rosidl_default_runtime)
+
+ament_package()

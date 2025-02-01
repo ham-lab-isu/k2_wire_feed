@@ -77,8 +77,7 @@ private:
 		STATE_WAIT_FOR_MOVE_DONE,
 		STATE_EXITED
 	};
-	StateEnum m_state;
-	StateEnum m_lastState;
+
 
 	// Move information
 	mgMoveProfiledInfo m_move;
@@ -107,6 +106,9 @@ private:
 	void AxisMain(Supervisor *theSuper);
 
 public:
+	StateEnum m_state;
+	StateEnum m_lastState;
+	
 	// Constructor/Destructor
 	Axis(INode *node);
 	~Axis();

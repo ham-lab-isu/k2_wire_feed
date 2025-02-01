@@ -164,6 +164,9 @@ void Supervisor::SuperMain(){
 					// Everyone is waiting; kick all the nodes
 					SetCondition(m_nodesKicked);
 					m_state = SUPER_WAIT_FOR_MOVES_SENT;
+					if (m_nodesKicked) {
+						m_state = SUPER_WAIT_FOR_MOVES_SENT;
+					}
 					break;
 				case SUPER_WAIT_FOR_MOVES_SENT:
 					// Wait for them all to say their moves have been sent
@@ -172,8 +175,10 @@ void Supervisor::SuperMain(){
 						continue;
 					ResetCondition(m_nodesKicked);
 					ResetCondition(m_axisSentMove, m_nodesMoved);
+					printf("Triggering moves in group\n");
 					m_axes.at(0)->MyNode()->Port.Adv.TriggerMovesInGroup(1);
 					m_state = SUPER_WAIT_FOR_MOVES_DONE;
+					printf("Moves have been triggered and state set to waiting for moves to be done.\n");
 					break;
 				case SUPER_WAIT_FOR_MOVES_DONE:
 					WaitForCondition(m_nodesDone);

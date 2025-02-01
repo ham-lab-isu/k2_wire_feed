@@ -60,10 +60,12 @@ private:
 		SUPER_EXITED
 	};
 
+
+public:
+
 	SuperStateEnum m_state;
 	SuperStateEnum m_lastState;
 	
-public:
 	// Constructor
 	Supervisor(vector<Axis*> theAxes, SysManager &myMgr);
 
@@ -135,6 +137,7 @@ private:
 	// Wait for a given condition
 	void WaitForCondition(bool &condition){
 		unique_lock<mutex> lock(m_mutex);
+		printf("Super waitin\n");
 		while (!condition && !m_quitting)
 			m_cond.wait(lock);
 	}

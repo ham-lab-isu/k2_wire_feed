@@ -270,8 +270,9 @@ bool Axis::WaitForMove(::int32_t timeoutMs){
 	attnMask.cpm.MoveDone = 1;
 	attnMask.cpm.Disabled = 1;
 	attnMask.cpm.NotReady = 1;
+	printf("Wairing for attn to clear");
 	attnSeen = m_node->Adv.Attn.WaitForAttn(attnMask, timeoutMs, false);
-	//printf("  End move axis %d: %f\n", m_node->Info.Ex.Addr(), infcCoreTime());
+	printf("  End move axis %d: %f\n", m_node->Info.Ex.Addr(), infcCoreTime());
 	if (attnSeen.cpm.Disabled){
 		printf("  ERROR: [%d] disabled during move\n", m_node->Info.Ex.Addr());
 		return false;
@@ -280,7 +281,13 @@ bool Axis::WaitForMove(::int32_t timeoutMs){
 		printf("  ERROR: [%d] went NotReady during move\n", m_node->Info.Ex.Addr());
 		return false;
 	}
-	return attnSeen.cpm.MoveDone;
+	if (attnSeen.cpm.MoveDone) {
+        printf("DEBUG: Move done for axis %d\n", m_node->Info.Ex.Addr());
+        return true;
+    } else {
+        printf("ERROR: [%2d] MoveDone signal never received!\n", m_node->Info.Ex.Addr());
+        return false;
+    }
 };
 //																			   *
 //******************************************************************************

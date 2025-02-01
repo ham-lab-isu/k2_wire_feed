@@ -15,6 +15,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(action_msgs REQUIRED)
+find_package(k2_action REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rcpputils REQUIRED)
 find_package(urdf REQUIRED)
@@ -26,12 +27,6 @@ find_package(realtime_tools REQUIRED)
 include_directories(
   include
   ${ament_INCLUDE_DIRS}
-)
-
-# Generate the action interface
-rosidl_generate_interfaces(${PROJECT_NAME}
-  "action/WireFeed.action"
-  DEPENDENCIES action_msgs
 )
 
 # Add executable and libraries
@@ -46,14 +41,10 @@ find_library(thread_LIBRARIES libpthread.so.0 PATHS /usr/lib/x86_64-linux-gnu)
 
 message("Found sFoundation library at ${sF_LIBRARIES}")
 
-# Link generated action messages
-rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
-
 # Ensure all libraries are linked in a single call
 target_link_libraries(k2_wf
   PUBLIC supervisor axis
   ${sF_LIBRARIES} ${thread_LIBRARIES}
-  ${cpp_typesupport_target}
 )
 
 # Link dependencies
@@ -61,7 +52,8 @@ ament_target_dependencies(k2_wf PUBLIC
   rclcpp 
   rclcpp_action 
   rclpy 
-  action_msgs 
+  action_msgs
+  k2_action 
   pluginlib 
   rcpputils 
   urdf 
@@ -84,10 +76,6 @@ install(
   DESTINATION include/${PROJECT_NAME}
 )
 install(
-  DIRECTORY action/
-  DESTINATION include/${PROJECT_NAME}
-)
-install(
   DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}
 )
@@ -103,23 +91,14 @@ install(
   RUNTIME DESTINATION bin
 )
 
-# Install generated headers
-install(
-  DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_cpp
-  DESTINATION include/${PROJECT_NAME}
-)
-install(
-  DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
 # Export package dependencies
 ament_export_targets(export_k2_wf HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   rclcpp 
   rclcpp_action 
   rclpy 
-  action_msgs 
+  action_msgs
+  k2_action
   pluginlib 
   rcpputils 
   urdf 

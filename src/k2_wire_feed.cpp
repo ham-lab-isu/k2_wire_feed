@@ -158,9 +158,6 @@ class WireFeedActionServer : public rclcpp::Node {
 					if (this->nodeTypesGood) {
 						// Create an axis for this node
 						this->listOfAxes.push_back(new Axis(&theNode));
-
-						// Add the node to the trigger group
-						theNode.Motion.Adv.TriggerGroup(1);
 						
 						if (!theNode.Setup.AccessLevelIsFull()) {
 							printf("---> ERROR: Oh snap! Access level is not good for node %u\n", iNode);
@@ -220,18 +217,8 @@ class WireFeedActionServer : public rclcpp::Node {
 			for (auto &axis : listOfAxes) {
 				RCLCPP_INFO(this->get_logger(), "Axis State, current: %d, prev: %d", axis->m_state);
 				axis->SetMoveRevs(3.0);
-			}
-			bool all_motors_done = false;
-			while(!all_motors_done){
-				all_motors_done = true;
-				for (auto &axis : listOfAxes) {
-					if (!axis->m_state==0) {
-						// If the motor is not in idle yet, it's running still
-						all_motors_done = false;
-						//RCLCPP_INFO(this->get_logger(), "waiting for movement completion");
-					}
-				}
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+				// Add the node to the trigger group
+				axis->m_node->Motion.Adv.TriggerGroup(1);
 			}
 			RCLCPP_INFO(this->get_logger(), "Wire feed movement completed.");
 			goal_handle->succeed(result);

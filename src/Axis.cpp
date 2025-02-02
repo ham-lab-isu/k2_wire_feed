@@ -234,22 +234,17 @@ void Axis::Move(){
 
 
 #if USE_HEAD_TAIL_MOVES
-	if (m_moveCount % 2 == 0){
-		// Make an absolute position move back to the zero location
-		m_node->Motion.Adv.MovePosnStart(0, true, theStyle.fld.wait);
-	} else {
 		m_node->Motion.Adv.MovePosnHeadTailStart(m_move.value,
-			!theStyle.fld.relative, theStyle.fld.wait,
-			m_node->Motion.Adv.HeadDistance.Value() > 0,
-			m_node->Motion.Adv.TailDistance.Value() > 0,
-			theStyle.fld.dwell);
-	}
+		!theStyle.fld.relative, theStyle.fld.wait,
+		m_node->Motion.Adv.HeadDistance.Value() > 0,
+		m_node->Motion.Adv.TailDistance.Value() > 0,
+		theStyle.fld.dwell);
 #else
 	m_node->Motion.Adv.MovePosnStart(m_move.value, 
 		!theStyle.fld.relative, theStyle.fld.wait, 
 		theStyle.fld.dwell);
 #endif
-	//printf("  Start move axis %d: %f\n", m_node->Info.Ex.Addr(), infcCoreTime());
+	printf("  Start move axis %d: %f\n", m_node->Info.Ex.Addr(), infcCoreTime());
 }
 //																			   *
 //******************************************************************************
@@ -270,7 +265,7 @@ bool Axis::WaitForMove(::int32_t timeoutMs){
 	attnMask.cpm.MoveDone = 1;
 	attnMask.cpm.Disabled = 1;
 	attnMask.cpm.NotReady = 1;
-	printf("Wairing for attn to clear");
+	printf("Waiting for attn to clear\n");
 	attnSeen = m_node->Adv.Attn.WaitForAttn(attnMask, timeoutMs, false);
 	printf("  End move axis %d: %f\n", m_node->Info.Ex.Addr(), infcCoreTime());
 	if (attnSeen.cpm.Disabled){
@@ -352,8 +347,8 @@ void Axis::AxisMain(Supervisor *theSuper){
 	// Start the machine cycling
 	while (!m_quitting)  {
 		try {
-
 			// Save last state for debugging purposes
+			printf("Axis State is currently %d and was previously %d\n", m_state, m_lastState);
 			m_lastState = m_state;
 			
 			switch (m_state) {

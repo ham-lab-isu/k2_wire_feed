@@ -126,20 +126,24 @@ private:
 		unique_lock<mutex> lock(m_mutex);
 		nodeFlags.at(nodeNum) = true;
 		bool gotAll = true;
-		for (Uint16 iAxis = 0; iAxis < nodeFlags.size(); iAxis++)
+		for (Uint16 iAxis = 0; iAxis < nodeFlags.size(); iAxis++){
 			gotAll = gotAll && nodeFlags.at(iAxis);
+			printf("Nodeflag at Axis %d is %s\n", iAxis, nodeFlags.at(iAxis) ? "true":"false");
+		}
 		if (gotAll){
 			condition = true;
 			m_cond.notify_all();
+			printf("SUPER SUCCESSFULLY SET CONDITION AS TRUE\n");
 		}
 	}
 
 	// Wait for a given condition
 	void WaitForCondition(bool &condition){
 		unique_lock<mutex> lock(m_mutex);
-		printf("Super waitin\n");
+		printf("Super waitin in state %d\n",m_state);
 		while (!condition && !m_quitting)
 			m_cond.wait(lock);
+		printf("Super has woken!\n");
 	}
 
 	// Clear the indicators for a particular condition

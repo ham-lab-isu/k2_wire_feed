@@ -107,6 +107,8 @@ void Supervisor::SignalMoveSent(Uint16 nodeNum){
 //
 void Supervisor::SignalMoveDone(Uint16 nodeNum){
 	SignalPerNode(m_axisDone, m_nodesDone, nodeNum);
+	printf("[Supervisor::SignalMoveDone] Move has been signalled as done by the Axis.\n");
+	m_nodesDone=true;
 }
 //																			   *
 //******************************************************************************
@@ -132,7 +134,7 @@ void Supervisor::SuperMain(){
 	try{
 		// Create threads for all the axes
 		for (Uint16 iAxis = 0; iAxis < m_axes.size(); iAxis++){
-			//printf(" axis[%d]: userID=%s\n", iAxis, theAxes.at(iAxis)->MyNode()->Info.UserID.Value());
+			printf(" axis[%d]: userID=%s\n", iAxis, m_axes.at(iAxis)->MyNode()->Info.UserID.Value());
 			m_axes.at(iAxis)->CreateThread(this);
 		}
 	}
@@ -145,7 +147,13 @@ void Supervisor::SuperMain(){
 	while (!m_quitting){
 		try {
 			// For debugging
+			printf("Supervisor State is currently %d and was previously %d\n", m_state, m_lastState);
+			if (m_nodesDone){
+				printf("Supervisor is currently seeing m_nodesDone as TRUE\n");
+			}
+
 			m_lastState = m_state;
+
 			switch (m_state){
 				case SUPER_IDLE:
 					// Reset each node to idle

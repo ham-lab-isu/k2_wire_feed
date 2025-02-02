@@ -58,9 +58,11 @@ class Supervisor;
 //	which runs the state machine for the node.
 //
 class Axis {
+public:
+	INode *m_node;				// The ClearPath-SC for this axis
+
 private:
 	Supervisor *m_super;		// The supervisor
-	INode *m_node;				// The ClearPath-SC for this axis
 	thread m_thread;			// Handle to this Axis's thread
 
 	// Filename for the config file stored at the start

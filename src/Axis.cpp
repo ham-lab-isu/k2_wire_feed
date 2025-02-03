@@ -201,11 +201,19 @@ void Axis::InitMotionParams(){
 							theStyle.fld.relative == 0);
 #endif
 	// Timeout for move: expected move duration + some time for synch between the nodes
-	m_moveTimeoutMs = moveDuration + 20;
+	m_moveTimeoutMs = moveDuration + 1000;
 	//printf("  [%2d]: moveCounts=%d moveTimeout=%d\n", m_node->Info.Ex.Addr, m_move.value, m_moveTimeoutMs);
 }
 //																			   *
 //******************************************************************************
+
+void Axis::SetMoveRevs(int numRevs){
+		m_move.value = (long)(m_node->Info.PositioningResolution.Value())*numRevs;
+		printf("[%s] m_move.value=%d\n", m_node->Info.UserID.Value(), m_move.value);
+		m_node->Motion.Adv.HeadDistance = m_move.value/4;
+		m_node->Motion.Adv.TailDistance = m_move.value/4;
+		m_super->RequestMove();
+	}
 
 //******************************************************************************
 //	NAME																	   *
@@ -215,6 +223,7 @@ void Axis::InitMotionParams(){
 //		Issue the move
 //
 void Axis::Move(){
+	printf("[Axis] Move() called! Executing Move\n");
 	// Clear out any lingering move done attentions
 	attnReg attnMask;
 	attnMask.cpm.MoveDone = 1;
@@ -233,19 +242,19 @@ void Axis::Move(){
 	theStyle.fld.dwell=0;
 
 
-#if USE_HEAD_TAIL_MOVES
+	#if USE_HEAD_TAIL_MOVES
 		m_node->Motion.Adv.MovePosnHeadTailStart(m_move.value,
 		!theStyle.fld.relative, theStyle.fld.wait,
 		m_node->Motion.Adv.HeadDistance.Value() > 0,
 		m_node->Motion.Adv.TailDistance.Value() > 0,
 		theStyle.fld.dwell);
-#else
+	#else
 	m_node->Motion.Adv.MovePosnStart(m_move.value, 
 		!theStyle.fld.relative, theStyle.fld.wait, 
 		theStyle.fld.dwell);
-#endif
-	printf("  Start move axis %d: %f\n", m_node->Info.Ex.Addr(), infcCoreTime());
-}
+	#endif
+		printf("  Start move axis %d: %f\n", m_node->Info.Ex.Addr(), infcCoreTime());
+	}
 //																			   *
 //******************************************************************************
 
@@ -287,6 +296,22 @@ bool Axis::WaitForMove(::int32_t timeoutMs){
 //																			   *
 //******************************************************************************
 
+bool Axis::IsMotionComplete() {
+		if (!m_node) {
+			printf("ERROR: IsMotionComplete() called on null node!\n");
+			return false;
+		}
+
+		// Refresh the node's status
+		m_node->Status.RT.Refresh();
+
+		// Check if MoveDone is set
+		bool moveDone = m_node->Status.RT.Value().cpm.MoveDone;
+
+		printf("DEBUG: Axis %d - MoveDone = %d\n", m_node->Info.Ex.Addr(), moveDone);
+		
+		return moveDone;
+	}
 //******************************************************************************
 //	NAME																	   *
 //		Axis::AxisMain

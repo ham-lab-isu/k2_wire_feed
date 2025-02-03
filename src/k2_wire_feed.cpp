@@ -87,6 +87,7 @@ class WireFeedActionServer : public rclcpp::Node {
 		}
 	private:
 		std::vector<Axis*> listOfAxes;
+		std::thread goal_thread;
 		rclcpp_action::Server<WireFeed>::SharedPtr action_server_;
 		float64 roller_diameter = 26.035; //mm - wire roller diameter
 		size_t portCount = 0;
@@ -206,22 +207,58 @@ class WireFeedActionServer : public rclcpp::Node {
 		// Goal Accepted Callback
 		void handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
 			RCLCPP_INFO(this->get_logger(), "Executing goal...");
-			std::thread(&WireFeedActionServer::execute_goal, this, goal_handle).detach();
+			goal_thread = std::thread(&WireFeedActionServer::execute_goal, this, goal_handle);
+			goal_thread.detach();
 		}
 
 		// execution function for the requested goal position
-		void execute_goal(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle){
+		void execute_goal(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
 			auto result = std::make_shared<WireFeed::Result>();
-			RCLCPP_INFO(this->get_logger(), "Starting wire feed movement...");
-			RCLCPP_INFO(this->get_logger(), "Supervisor State, current: %d, prev: %d", theSuper->m_state, theSuper->m_lastState);
+
+			// Check if a move is already in progress
 			for (auto &axis : listOfAxes) {
-				RCLCPP_INFO(this->get_logger(), "Axis State, current: %d, prev: %d", axis->m_state);
-				axis->SetMoveRevs(3.0);
-				// Add the node to the trigger group
-				axis->m_node->Motion.Adv.TriggerGroup(1);
+				if (!axis->IsMotionComplete()) {
+					RCLCPP_WARN(this->get_logger(), "New action request while a move is already in progress! Rejecting.");
+					goal_handle->abort(result);
+					return;
+				}
 			}
-			RCLCPP_INFO(this->get_logger(), "Wire feed movement completed.");
+			RCLCPP_INFO(this->get_logger(), "Starting wire feed...");
+
+			// Loop through all of the axes and assign Positional Revolution Moves
+			for (auto &axis : listOfAxes) {
+				axis->SetMoveRevs(1.0);
+			}
+			
+			// Explicitly tell the Supervisor to move
+    		theSuper->RequestMove();
+
+			bool all_motors_done = false;
+			while (!all_motors_done) {
+				all_motors_done = true;
+				for (auto &axis : listOfAxes) {
+					if (!axis->IsMotionComplete()) {
+						all_motors_done = false;
+					}
+				}
+				if (!rclcpp::ok()) {
+					RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
+					goal_handle->abort(result);
+					return;
+				}
+				RCLCPP_INFO(this->get_logger(), "Waiting for goal execution");
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+				sched_yield();  // Allow Supervisor and Axis threads to run
+			}
+
+			RCLCPP_INFO(this->get_logger(), "Wire feed completed.");
 			goal_handle->succeed(result);
+
+			// Ensure thread is cleaned up only if it's not already done
+			if (std::this_thread::get_id() != goal_thread.get_id() && goal_thread.joinable()) {
+				RCLCPP_INFO(this->get_logger(), "Shutting down the execute thread.");
+				goal_thread.join();
+			}
 		}
 
 		void quit_supervisor(){
@@ -245,6 +282,9 @@ class WireFeedActionServer : public rclcpp::Node {
 
 int main(int argc, char* argv[])
 {
+	std::cout.setf(std::ios::unitbuf);  // Disable buffering for std::cout
+	setbuf(stdout, NULL);               // Disable buffering for printf
+
 	// Fire up the ROS2 node and action server
 	rclcpp::init(argc, argv);
   	auto node = std::make_shared<WireFeedActionServer>();

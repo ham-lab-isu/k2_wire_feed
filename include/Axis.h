@@ -58,10 +58,9 @@ class Supervisor;
 //	which runs the state machine for the node.
 //
 class Axis {
-public:
+private:
 	INode *m_node;				// The ClearPath-SC for this axis
 
-private:
 	Supervisor *m_super;		// The supervisor
 	thread m_thread;			// Handle to this Axis's thread
 
@@ -135,12 +134,7 @@ public:
 	}
 
 	// Set the move distance to the given number of revolutions
-	void SetMoveRevs(int numRevs){
-		m_move.value = (long)(m_node->Info.PositioningResolution.Value())*numRevs;
-		printf("[%s] m_move.value=%d\n", m_node->Info.UserID.Value(), m_move.value);
-		m_node->Motion.Adv.HeadDistance = m_move.value/4;
-		m_node->Motion.Adv.TailDistance = m_move.value/4;
-	}
+	void SetMoveRevs(int numRevs);
 
 	// Create the thread and get it going
 	void CreateThread(Supervisor *theSuper){
@@ -162,6 +156,11 @@ public:
 	void Join(){
 		m_thread.join();
 	}
+
+	//method to return whether the axis motion is complete or not. 
+	//prevents thread interruption
+	bool IsMotionComplete();
+
 };
 //																			   *
 //******************************************************************************

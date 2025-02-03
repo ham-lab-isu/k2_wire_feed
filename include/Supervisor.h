@@ -44,6 +44,7 @@ private:
 	// Flags to indicate that all nodes have reported back 
 	// for various conditions
 	bool m_nodesIdle, m_nodesMoved, m_nodesDone, m_nodesKicked, m_nodesReady;
+	bool m_moveRequested = false;
 	// Flags to keep track of which nodes have reported back
 	// for various conditions
 	vector<bool> m_axisReady;
@@ -69,9 +70,7 @@ public:
 	// Constructor
 	Supervisor(vector<Axis*> theAxes, SysManager &myMgr);
 
-	void CreateThread(){
-		m_thread = thread(&Supervisor::SuperMain, this);
-	}
+	void CreateThread();
 
 	// Print stats for all the nodes
 	void PrintStats(){
@@ -87,6 +86,8 @@ public:
 	void SignalMoveSent(Uint16 nodeNum);	// Nodes tell the supervisor when they've sent their move
 	void SignalMoveDone(Uint16 nodeNum);	// Nodes tell the supervisor whne their move is done
 	void SignalReady(Uint16 nodeNum);		// Nodes signal when they are initialized
+	void RequestMove();             		// New method to request a move
+    bool IsMoveRequested();         		// New method to check if a move is requested
 
 	void SuperMain();		// the work for this thread
 

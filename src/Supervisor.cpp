@@ -43,6 +43,12 @@ Supervisor::Supervisor(vector<Axis*> theAxes, SysManager &myMgr)
 		m_axisDone.push_back(false);
 	}
 }
+
+void Supervisor::CreateThread(){
+	printf("[Supervisor] Creating Supervisor thread...\n");
+	m_thread = thread(&Supervisor::SuperMain, this);
+	m_thread.detach();
+}
 //																			   *
 //******************************************************************************
 
@@ -108,10 +114,41 @@ void Supervisor::SignalMoveSent(Uint16 nodeNum){
 void Supervisor::SignalMoveDone(Uint16 nodeNum){
 	SignalPerNode(m_axisDone, m_nodesDone, nodeNum);
 	printf("[Supervisor::SignalMoveDone] Move has been signalled as done by the Axis.\n");
-	m_nodesDone=true;
-}
+
+    // Only proceed if ALL nodes are done
+    bool all_done = true;
+    for (bool done : m_axisDone) {
+        if (!done) {
+            all_done = false;
+            break;
+        }
+    }
+
+    if (all_done) {
+        printf("DEBUG: All axes have completed their moves. Notifying Supervisor.\n");
+        SetCondition(m_nodesDone);
+    }}
 //																			   *
 //******************************************************************************
+
+//******************************************************************************
+//	NAME																	   *
+//		Supervisor::RequestMove and Supervisor::IsMoveRequested
+//
+//	DESCRIPTION:
+//		Method to explicitly call move requests
+//
+void Supervisor::RequestMove() {
+    std::lock_guard<std::mutex> lock(m_mutex);  // Ensure thread safety
+    m_moveRequested = true;
+    printf("[Supervisor] Move has been explicitly requested.\n");
+}
+
+bool Supervisor::IsMoveRequested() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_moveRequested;
+}
+
 
 //******************************************************************************
 //	NAME																	   *
@@ -164,16 +201,23 @@ void Supervisor::SuperMain(){
 				case SUPER_WAIT_FOR_IDLE:
 					if (m_quitting)
 						continue;
-					// Wait for the nodes to go idle
+
 					WaitForCondition(m_nodesIdle);
+					
 					if (m_quitting)
 						continue;
+
 					ResetCondition(m_axisIdle, m_nodesIdle);
-					// Everyone is waiting; kick all the nodes
-					SetCondition(m_nodesKicked);
-					m_state = SUPER_WAIT_FOR_MOVES_SENT;
-					if (m_nodesKicked) {
+
+					// Only kick nodes if a move has been requested
+					if (IsMoveRequested()) {
+						printf("[Supervisor] Kicking nodes for a new move.\n");
+						SetCondition(m_nodesKicked);
+						m_moveRequested = false;  // Reset the move request flag
 						m_state = SUPER_WAIT_FOR_MOVES_SENT;
+					} else {
+						printf("[Supervisor] No move requested, staying in idle state.\n");
+						m_state = SUPER_WAIT_FOR_IDLE;
 					}
 					break;
 				case SUPER_WAIT_FOR_MOVES_SENT:
@@ -190,6 +234,7 @@ void Supervisor::SuperMain(){
 					break;
 				case SUPER_WAIT_FOR_MOVES_DONE:
 					WaitForCondition(m_nodesDone);
+					printf("DEBUG: Move completion detected by Supervisor, resetting conditions.\n");
 					PrintStats();
 					// Take a break
 					m_sysMgr.Delay(10);

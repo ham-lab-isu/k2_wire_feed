@@ -32,8 +32,8 @@ include_directories(
 # Add executable and libraries
 add_executable(k2_wf src/k2_wire_feed.cpp)
 #add_dependencies(k2_wf ${PROJECT_NAME}_generate_interfaces)
-add_library(supervisor src/Supervisor.cpp)
-add_library(axis src/Axis.cpp)
+#add_library(supervisor src/Supervisor.cpp)
+#add_library(axis src/Axis.cpp)
 
 # Find external shared libraries
 find_library(sF_LIBRARIES libsFoundation20.so PATHS ${PROJECT_SOURCE_DIR}/lib/)
@@ -43,7 +43,7 @@ message("Found sFoundation library at ${sF_LIBRARIES}")
 
 # Ensure all libraries are linked in a single call
 target_link_libraries(k2_wf
-  PUBLIC supervisor axis
+  PUBLIC
   ${sF_LIBRARIES} ${thread_LIBRARIES}
 )
 
@@ -83,16 +83,10 @@ install(
   TARGETS k2_wf
   DESTINATION lib/${PROJECT_NAME}
 )
-install(
-  TARGETS supervisor axis
-  EXPORT export_k2_wf
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
-)
+
 
 # Export package dependencies
-ament_export_targets(export_k2_wf HAS_LIBRARY_TARGET)
+#ament_export_targets(export_k2_wf HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   rclcpp 
   rclcpp_action 

@@ -21,13 +21,23 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <std_msgs/msg/string.hpp>
 #include "k2_action/action/wire_feed.hpp"
-#include "Axis.h"
-#include "Supervisor.h"
+#include "pubSysCls.h"
+#include <thread>
+
+using namespace sFnd;
+using namespace std;
+//#include "Axis.h"
+//#include "Supervisor.h"
 
 // Send message and wait for newline
 void msgUser(const char *msg) {
 	std::cout << msg;
 	getchar();
+}
+
+// Check if the bus power has been applied.
+bool IsBusPowerLow(INode &theNode) {
+    return theNode.Status.Power.Value().fld.InBusLoss;
 }
 
 /*****************************************************************************
@@ -65,12 +75,18 @@ string CurrentTimeStr() {
 #pragma warning(default:4996)
 #endif
 
+#define ACC_LIM_RPM_PER_SEC	100000
+#define VEL_LIM_RPM			700
+#define MOVE_DISTANCE_CNTS	10000	
+#define NUM_MOVES			5
+#define TIME_TILL_TIMEOUT	10000
+
 /************* Wire Feed Server Class Definition *********** */
 
 using WireFeed = k2_action::action::WireFeed;
 
 class WireFeedActionServer : public rclcpp::Node {
-	public:
+	public:		
 		// Constructor: build the action server and bind the major functions: handle_goal, handle_cancel, and handle_accepted
 		WireFeedActionServer() : Node("wire_feed_action_server") {
 			action_server_ = rclcpp_action::create_server<WireFeed>(
@@ -86,19 +102,15 @@ class WireFeedActionServer : public rclcpp::Node {
 			initialize_axes();
 		}
 	private:
-		std::vector<Axis*> listOfAxes;
+		std::vector<INode*> listOfNodes;
 		std::thread goal_thread;
 		rclcpp_action::Server<WireFeed>::SharedPtr action_server_;
 		float64 roller_diameter = 26.035; //mm - wire roller diameter
 		size_t portCount = 0;
+		SysManager* myMgr;
 
-		//Create the SysManager object. This object will coordinate actions among various ports
-		// and within nodes. In this example we use this object to setup and open our port.
-		SysManager* myMgr = SysManager::Instance();
 		std::vector<std::string> comHubPorts;
-
-		// Create a pointer for the Supervisor member. This member formally gets initialized in initialize_axes()
-		Supervisor* theSuper;
+		int COUNTS_PER_REV;
 
 		// Assume that the nodes are of the right type and that this app has full control
 		bool nodeTypesGood = true, accessLvlsGood = true; 
@@ -106,6 +118,10 @@ class WireFeedActionServer : public rclcpp::Node {
 		// Method to initialize the SC Hubs as ports and motors as nodes
 		void initialize_axes(){
 			RCLCPP_INFO(this->get_logger(), "Initializing axes...");
+
+			//Create the SysManager object. This object will coordinate actions among various ports
+			// and within nodes. In this example we use this object to setup and open our port.
+			myMgr = SysManager::Instance();
 
 			//This will try to open the port. If there is an error/exception during the port opening,
 			//the code will jump to the catch loop where detailed information regarding the error will be displayed;
@@ -143,12 +159,19 @@ class WireFeedActionServer : public rclcpp::Node {
 				// The attentions will be handled by the individual nodes, but register
 				// a handler at the port level, just for illustrative purposes.
 				myPort.Adv.Attn.AttnHandler(AttentionDetected);
+				double timeout = myMgr->TimeStampMsec() + TIME_TILL_TIMEOUT;	//define a timeout in case the node is unable to enable
 
 				for (unsigned iNode = 0; iNode < myPort.NodeCount(); iNode++){
 
 					// Get a reference to the node, to make accessing it easier
 					INode &theNode = myPort.Nodes(iNode);
+					theNode.EnableReq(false);
+
+					// Set the node parameters
 					theNode.Motion.AccLimit = 100000;
+					theNode.Status.AlertsClear();					//Clear Alerts on node 
+					theNode.Motion.NodeStopClear();	//Clear Nodestops on Node  				
+					theNode.EnableReq(true);					//Enable node 
 
 					// Make sure we are talking to a ClearPath SC
 					if (theNode.Info.NodeType() != IInfo::CLEARPATH_SC_ADV) {
@@ -157,8 +180,8 @@ class WireFeedActionServer : public rclcpp::Node {
 					}
 
 					if (this->nodeTypesGood) {
-						// Create an axis for this node
-						this->listOfAxes.push_back(new Axis(&theNode));
+						// add node to list
+						this->listOfNodes.push_back(&theNode);
 						
 						if (!theNode.Setup.AccessLevelIsFull()) {
 							printf("---> ERROR: Oh snap! Access level is not good for node %u\n", iNode);
@@ -166,14 +189,22 @@ class WireFeedActionServer : public rclcpp::Node {
 						}
 					}
 
+					while (!theNode.Motion.IsReady()) {
+						if (myMgr->TimeStampMsec() > timeout) {
+							if (IsBusPowerLow(theNode)) {
+								printf("Error: Bus Power low. Make sure 75V supply is powered on.\n");
+								msgUser("Press any key to continue.");
+								return;
+							}
+							printf("Error: Timed out waiting for Node %d to enable\n", iNode);
+							msgUser("Press any key to continue."); //pause so the user can see the error message; waits for user to press a key
+							return;
+						}
+					}
+
 					// If we have full access to the nodes and they are all ClearPath-SC advanced nodes, 
 					// then continue with the example
 					if (nodeTypesGood && accessLvlsGood){
-
-						// Create the supervisor thread, giving it access to the list of axes
-						this->theSuper = new Supervisor(this->listOfAxes, *myMgr);
-						theSuper->CreateThread();
-
 						printf("\nMachine starting: %s\n", CURRENT_TIME_STR);
 					}
 					else{
@@ -214,64 +245,51 @@ class WireFeedActionServer : public rclcpp::Node {
 		// execution function for the requested goal position
 		void execute_goal(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
 			auto result = std::make_shared<WireFeed::Result>();
+			const auto goal = goal_handle->get_goal();
 
-			// Check if a move is already in progress
-			for (auto &axis : listOfAxes) {
-				if (!axis->IsMotionComplete()) {
-					RCLCPP_WARN(this->get_logger(), "New action request while a move is already in progress! Rejecting.");
-					goal_handle->abort(result);
-					return;
-				}
-			}
 			RCLCPP_INFO(this->get_logger(), "Starting wire feed...");
 
-			// Loop through all of the axes and assign Positional Revolution Moves
-			for (auto &axis : listOfAxes) {
-				axis->SetMoveRevs(1.0);
-			}
+			int iPort = 0;
+			int iNode = goal->axis_number;
+			float64 revs = goal->distance;
+			float64 velocity = goal->velocity;
+			float64 acceleration = goal->acceleration;
 			
-			// Explicitly tell the Supervisor to move
-    		theSuper->RequestMove();
+			IPort &myPort = myMgr->Ports(iPort);
+			INode &theNode = myPort.Nodes(iNode);
+			theNode.Motion.MoveWentDone();						//Clear the rising edge Move done register
+			theNode.AccUnit(INode::RPM_PER_SEC);				//Set the units for Acceleration to RPM/SEC
+			theNode.VelUnit(INode::RPM);						//Set the units for Velocity to RPM
+			theNode.Motion.AccLimit = acceleration*10;		//Set Acceleration Limit (RPM/Sec)
+			theNode.Motion.VelLimit = velocity*10;				//Set Velocity Limit (RPM)
+			COUNTS_PER_REV = theNode.Info.PositioningResolution.Value();
 
-			bool all_motors_done = false;
-			while (!all_motors_done) {
-				all_motors_done = true;
-				for (auto &axis : listOfAxes) {
-					if (!axis->IsMotionComplete()) {
-						all_motors_done = false;
-					}
-				}
-				if (!rclcpp::ok()) {
+			printf("Moving Node \t%zi \n", iNode);
+			theNode.Motion.MovePosnStart(revs*COUNTS_PER_REV);			//Execute 10000 encoder count move 
+			//theNode.Motion.MoveVelStart(100);
+			
+			if (!rclcpp::ok()) {
 					RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
 					goal_handle->abort(result);
 					return;
-				}
-				RCLCPP_INFO(this->get_logger(), "Waiting for goal execution");
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				sched_yield();  // Allow Supervisor and Axis threads to run
 			}
+			(this->get_logger(), "Waiting for goal execution");			
 
 			RCLCPP_INFO(this->get_logger(), "Wire feed completed.");
 			goal_handle->succeed(result);
-
-			// Ensure thread is cleaned up only if it's not already done
-			if (std::this_thread::get_id() != goal_thread.get_id() && goal_thread.joinable()) {
-				RCLCPP_INFO(this->get_logger(), "Shutting down the execute thread.");
-				goal_thread.join();
-			}
 		}
 
 		void quit_supervisor(){
-			theSuper->Quit();
-			theSuper->Terminate();
-			delete theSuper;
-			theSuper = nullptr;
+			//theSuper->Quit();
+			//theSuper->Terminate();
+			//delete theSuper;
+			//theSuper = nullptr;
 						
 			// Delete the list of axes that were created
-			for (size_t iAxis = 0; iAxis < listOfAxes.size(); iAxis++){
-				delete listOfAxes.at(iAxis);
+			for (size_t iNode = 0; iNode < listOfNodes.size(); iNode++){
+				delete listOfNodes.at(iNode);
 			}
-			listOfAxes.clear();
+			listOfNodes.clear();
 
 			// Close down the ports
 			myMgr->PortsClose();

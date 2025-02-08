@@ -26,6 +26,7 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+#include <array>
 
 using namespace sFnd;
 using namespace std;
@@ -78,6 +79,7 @@ string CurrentTimeStr() {
 #pragma warning(default:4996)
 #endif
 
+#define MAX_MOTORS 16
 #define ACC_LIM_RPM_PER_SEC	100000
 #define VEL_LIM_RPM			700
 #define MOVE_DISTANCE_CNTS	10000	
@@ -88,45 +90,61 @@ string CurrentTimeStr() {
 
 using WireFeed = k2_action::action::WireFeed;
 
-class WireFeedActionServer : public rclcpp::Node {
+class WireFeedDistanceServer : public rclcpp::Node {
 	public:		
 		// Constructor: build the action server and bind the major functions: handle_goal, handle_cancel, and handle_accepted
-		WireFeedActionServer() : Node("wire_feed_action_server") {
-			action_server_ = rclcpp_action::create_server<WireFeed>(
+		WireFeedDistanceServer() : Node("wire_feed_distance_server") {
+			distance_server_ = rclcpp_action::create_server<WireFeed>(
 				this,
-				"wire_feed_action",
-				std::bind(&WireFeedActionServer::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
-				std::bind(&WireFeedActionServer::handle_cancel, this, std::placeholders::_1),
-				std::bind(&WireFeedActionServer::handle_accepted, this, std::placeholders::_1)
+				"wire_feed_distance",
+				std::bind(&WireFeedDistanceServer::handle_distance_goal, this, std::placeholders::_1, std::placeholders::_2),
+				std::bind(&WireFeedDistanceServer::handle_distance_cancel, this, std::placeholders::_1),
+				std::bind(&WireFeedDistanceServer::handle_distance_accepted, this, std::placeholders::_1)
 			);
 
 			RCLCPP_INFO(this->get_logger(), "WireFeed Action Server is up and running!");
+
+			// Initialize the motor axes
 			initialize_axes();
 
-			execution_thread_ = std::thread(&WireFeedActionServer::process_goals, this);
+			// Initialize execution threads for each axis
+			for (int i = 0; i < MAX_MOTORS; ++i) {
+				execution_threads_[i] = std::thread(&WireFeedDistanceServer::process_goals, this, i);
+			}		
 		}
 
-		~WireFeedActionServer() {
-			if (execution_thread_.joinable()) {
-				execution_thread_.join();
+		~WireFeedDistanceServer() {
+			running_ = false; // Stop execution loops
+			for (int i = 0; i < MAX_MOTORS; ++i) {
+				goal_condition_[i].notify_all();
+				if (execution_threads_[i].joinable()) {
+					execution_threads_[i].join();
+				}
 			}
 		}
 
 	private:
-		std::queue<std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>>> goal_queue_;
-		std::mutex queue_mutex_;
-		std::condition_variable goal_condition_;
-		std::thread execution_thread_;
-		bool executing_goal_ = false;
+		// Action server
+		rclcpp_action::Server<WireFeed>::SharedPtr distance_server_;
+
+		// Queue for each motor
+		std::array<std::queue<std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>>>, MAX_MOTORS> goal_queues_;
+		std::array<std::mutex, MAX_MOTORS> queue_mutex_;
+		std::array<std::condition_variable, MAX_MOTORS> goal_condition_;
+		std::array<std::thread, MAX_MOTORS> execution_threads_;
+		std::atomic<bool> running_{true};std::queue<std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>>> goal_queue_;
+
+		// Teknic members
 		std::vector<INode*> listOfNodes;
-		std::thread goal_thread;
-		rclcpp_action::Server<WireFeed>::SharedPtr action_server_;
+		SysManager* myMgr;
+		int COUNTS_PER_REV;
+
 		float64 roller_diameter = 26.035; //mm - wire roller diameter
 		size_t portCount = 0;
-		SysManager* myMgr;
 
 		std::vector<std::string> comHubPorts;
-		int COUNTS_PER_REV;
+
+		std::thread goal_thread;
 
 		// Assume that the nodes are of the right type and that this app has full control
 		bool nodeTypesGood = true, accessLvlsGood = true; 
@@ -237,7 +255,7 @@ class WireFeedActionServer : public rclcpp::Node {
 		}
 
 		// Goal Callback
-		rclcpp_action::GoalResponse handle_goal(const rclcpp_action::GoalUUID &uuid, std::shared_ptr<const WireFeed::Goal> goal) {
+		rclcpp_action::GoalResponse handle_distance_goal(const rclcpp_action::GoalUUID &uuid, std::shared_ptr<const WireFeed::Goal> goal) {
 			RCLCPP_INFO(this->get_logger(), "Received goal request.");
 			(void)uuid;
 			(void)goal;
@@ -245,72 +263,72 @@ class WireFeedActionServer : public rclcpp::Node {
 		}
 		
 		// Cancel Callback
-		rclcpp_action::CancelResponse handle_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
+		rclcpp_action::CancelResponse handle_distance_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
 			RCLCPP_INFO(this->get_logger(), "Received request to cancel goal.");
 			(void)goal_handle;
 			return rclcpp_action::CancelResponse::ACCEPT;
 		}
 
 		// Goal Accepted Callback
-		void handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
+		void handle_distance_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
 			RCLCPP_INFO(this->get_logger(), "Received new goal request, adding to queue.");
+	        auto goal = goal_handle->get_goal();
+        	int axis = goal->axis_number;
 
-			{
-				std::lock_guard<std::mutex> lock(queue_mutex_);
-				goal_queue_.push(goal_handle);
+			if (axis < 0 || axis >= MAX_MOTORS) {
+				RCLCPP_ERROR(this->get_logger(), "Invalid axis number: %d. Must be between 0 and %d.", axis, MAX_MOTORS - 1);
+				return;
 			}
-			goal_condition_.notify_one();  // Notify the execution thread
+			
+			{
+				std::lock_guard<std::mutex> lock(queue_mutex_[axis]);
+				goal_queues_[axis].push(goal_handle);
+			}
+			goal_condition_[axis].notify_one();  // Notify the execution thread
 		}
 
 		// This method creates an execution thread to process received goals sequentially
-		void process_goals() {
-			while (rclcpp::ok()) {
+		void process_goals(int axis) {
+			while (running_) {
 				std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle;
 				
 				{
-					std::unique_lock<std::mutex> lock(queue_mutex_);
-					goal_condition_.wait(lock, [this] { return !goal_queue_.empty() || !rclcpp::ok(); });
+					std::unique_lock<std::mutex> lock(queue_mutex_[axis]);
+					goal_condition_[axis].wait(lock, [this, axis] { return !goal_queues_[axis].empty() || !running_; });
 
-					if (!rclcpp::ok()) return;
-					
-					goal_handle = goal_queue_.front();
-					goal_queue_.pop();
+					if (!running_) break;
+
+					goal_handle = goal_queues_[axis].front();
+					goal_queues_[axis].pop();
 				}
 
-				executing_goal_ = true;
-				execute_goal(goal_handle);
-				executing_goal_ = false;
+				execute_goal(goal_handle, axis);
 			}
 		}
 
 
 		// execution function for the requested goal position
-		void execute_goal(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
+		void execute_goal(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle, int axis) {
 			auto result = std::make_shared<WireFeed::Result>();
 			auto feedback = std::make_shared<WireFeed::Feedback>();
-
 			const auto goal = goal_handle->get_goal();
-			RCLCPP_INFO(this->get_logger(), "Starting wire feed...");
 
-			int iPort = 0;
-			int iNode = goal->axis_number;
-			float64 revs = goal->distance;
-			float64 velocity = goal->velocity;
-			float64 acceleration = goal->acceleration;
+			RCLCPP_INFO(this->get_logger(), "Starting wire feed for axis %d...", axis);
 
-			IPort &myPort = myMgr->Ports(iPort);
-			INode &theNode = myPort.Nodes(iNode);
+			// this assumes a single SC hub; iPort will need to be linked to each hub/node combo
+			IPort &myPort = myMgr->Ports(0);
+			INode &theNode = myPort.Nodes(axis);
 			
 			theNode.Motion.MoveWentDone();
 			theNode.AccUnit(INode::RPM_PER_SEC);
 			theNode.VelUnit(INode::RPM);
-			theNode.Motion.AccLimit = acceleration;
-			theNode.Motion.VelLimit = velocity;
+			theNode.Motion.AccLimit = goal->acceleration;
+			theNode.Motion.VelLimit = goal->velocity;
 			COUNTS_PER_REV = theNode.Info.PositioningResolution.Value();
 
-			theNode.Motion.MovePosnStart(revs * COUNTS_PER_REV);
+			theNode.Motion.MovePosnStart(goal->distance * COUNTS_PER_REV);
 			
-			double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(revs * COUNTS_PER_REV) + 100;
+			double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(goal->distance * COUNTS_PER_REV) + 100;
 			double start_time = myMgr->TimeStampMsec();
 
 			while (!theNode.Motion.MoveWentDone() && myMgr->TimeStampMsec() < start_time + timeout) {
@@ -358,7 +376,7 @@ int main(int argc, char* argv[])
 
 	// Fire up the ROS2 node and action server
 	rclcpp::init(argc, argv);
-  	auto node = std::make_shared<WireFeedActionServer>();
+  	auto node = std::make_shared<WireFeedDistanceServer>();
 	//msgUser("Multithreaded K2 instance starting. Press Enter to continue.");
 
 	RCLCPP_INFO(rclcpp::get_logger("WireFeed"), "----------- RUNNING TEKNIC NODE -----------");

@@ -23,6 +23,9 @@
 #include "k2_action/action/wire_feed.hpp"
 #include "pubSysCls.h"
 #include <thread>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 
 using namespace sFnd;
 using namespace std;
@@ -96,12 +99,25 @@ class WireFeedActionServer : public rclcpp::Node {
 				std::bind(&WireFeedActionServer::handle_cancel, this, std::placeholders::_1),
 				std::bind(&WireFeedActionServer::handle_accepted, this, std::placeholders::_1)
 			);
-			RCLCPP_INFO(this->get_logger(), "WireFeed Action Server is up and running!");
 
-			// Setup the hardware
+			RCLCPP_INFO(this->get_logger(), "WireFeed Action Server is up and running!");
 			initialize_axes();
+
+			execution_thread_ = std::thread(&WireFeedActionServer::process_goals, this);
 		}
+
+		~WireFeedActionServer() {
+			if (execution_thread_.joinable()) {
+				execution_thread_.join();
+			}
+		}
+
 	private:
+		std::queue<std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>>> goal_queue_;
+		std::mutex queue_mutex_;
+		std::condition_variable goal_condition_;
+		std::thread execution_thread_;
+		bool executing_goal_ = false;
 		std::vector<INode*> listOfNodes;
 		std::thread goal_thread;
 		rclcpp_action::Server<WireFeed>::SharedPtr action_server_;
@@ -237,16 +253,43 @@ class WireFeedActionServer : public rclcpp::Node {
 
 		// Goal Accepted Callback
 		void handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
-			RCLCPP_INFO(this->get_logger(), "Executing goal...");
-			goal_thread = std::thread(&WireFeedActionServer::execute_goal, this, goal_handle);
-			goal_thread.detach();
+			RCLCPP_INFO(this->get_logger(), "Received new goal request, adding to queue.");
+
+			{
+				std::lock_guard<std::mutex> lock(queue_mutex_);
+				goal_queue_.push(goal_handle);
+			}
+			goal_condition_.notify_one();  // Notify the execution thread
 		}
+
+		// This method creates an execution thread to process received goals sequentially
+		void process_goals() {
+			while (rclcpp::ok()) {
+				std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle;
+				
+				{
+					std::unique_lock<std::mutex> lock(queue_mutex_);
+					goal_condition_.wait(lock, [this] { return !goal_queue_.empty() || !rclcpp::ok(); });
+
+					if (!rclcpp::ok()) return;
+					
+					goal_handle = goal_queue_.front();
+					goal_queue_.pop();
+				}
+
+				executing_goal_ = true;
+				execute_goal(goal_handle);
+				executing_goal_ = false;
+			}
+		}
+
 
 		// execution function for the requested goal position
 		void execute_goal(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
 			auto result = std::make_shared<WireFeed::Result>();
-			const auto goal = goal_handle->get_goal();
+			auto feedback = std::make_shared<WireFeed::Feedback>();
 
+			const auto goal = goal_handle->get_goal();
 			RCLCPP_INFO(this->get_logger(), "Starting wire feed...");
 
 			int iPort = 0;
@@ -254,28 +297,38 @@ class WireFeedActionServer : public rclcpp::Node {
 			float64 revs = goal->distance;
 			float64 velocity = goal->velocity;
 			float64 acceleration = goal->acceleration;
-			
+
 			IPort &myPort = myMgr->Ports(iPort);
 			INode &theNode = myPort.Nodes(iNode);
-			theNode.Motion.MoveWentDone();						//Clear the rising edge Move done register
-			theNode.AccUnit(INode::RPM_PER_SEC);				//Set the units for Acceleration to RPM/SEC
-			theNode.VelUnit(INode::RPM);						//Set the units for Velocity to RPM
-			theNode.Motion.AccLimit = acceleration*10;		//Set Acceleration Limit (RPM/Sec)
-			theNode.Motion.VelLimit = velocity*10;				//Set Velocity Limit (RPM)
+			
+			theNode.Motion.MoveWentDone();
+			theNode.AccUnit(INode::RPM_PER_SEC);
+			theNode.VelUnit(INode::RPM);
+			theNode.Motion.AccLimit = acceleration;
+			theNode.Motion.VelLimit = velocity;
 			COUNTS_PER_REV = theNode.Info.PositioningResolution.Value();
 
-			printf("Moving Node \t%zi \n", iNode);
-			theNode.Motion.MovePosnStart(revs*COUNTS_PER_REV);			//Execute 10000 encoder count move 
-			//theNode.Motion.MoveVelStart(100);
+			theNode.Motion.MovePosnStart(revs * COUNTS_PER_REV);
 			
-			if (!rclcpp::ok()) {
+			double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(revs * COUNTS_PER_REV) + 100;
+			double start_time = myMgr->TimeStampMsec();
+
+			while (!theNode.Motion.MoveWentDone() && myMgr->TimeStampMsec() < start_time + timeout) {
+				if (!rclcpp::ok()) {
 					RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
 					goal_handle->abort(result);
 					return;
+				}
+
+				// Provide periodic feedback
+				feedback->current_distance = theNode.Motion.PosnMeasured.Value() / COUNTS_PER_REV;
+				goal_handle->publish_feedback(feedback);
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
 			}
-			(this->get_logger(), "Waiting for goal execution");			
 
 			RCLCPP_INFO(this->get_logger(), "Wire feed completed.");
+			result->success = true;
+			result->message = "Wire feed move was successful";
 			goal_handle->succeed(result);
 		}
 

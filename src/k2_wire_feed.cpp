@@ -266,6 +266,15 @@ class WireFeedDistanceServer : public rclcpp::Node {
 		rclcpp_action::CancelResponse handle_distance_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
 			RCLCPP_INFO(this->get_logger(), "Received request to cancel goal.");
 			(void)goal_handle;
+
+			// get the node object
+			auto goal = goal_handle->get_goal();
+        	int axis = goal->axis_number;
+			//INode &theNode = myPort.Nodes(axis);
+
+			// call the Node Stop method; clear it immediately
+			//theNode.Motion.NodeStop(0x11);
+			//theNode.Motion.NodeStopClear();
 			return rclcpp_action::CancelResponse::ACCEPT;
 		}
 

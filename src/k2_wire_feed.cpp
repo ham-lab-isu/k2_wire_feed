@@ -121,6 +121,8 @@ class WireFeedDistanceServer : public rclcpp::Node {
 					execution_threads_[i].join();
 				}
 			}
+
+			quit_supervisor();
 		}
 
 	private:
@@ -358,24 +360,19 @@ class WireFeedDistanceServer : public rclcpp::Node {
 			result->message = "Wire feed move was successful";
 			goal_handle->succeed(result);
 		}
-
+	
 		void quit_supervisor(){
-			//theSuper->Quit();
-			//theSuper->Terminate();
-			//delete theSuper;
-			//theSuper = nullptr;
-						
-			// Delete the list of axes that were created
-			for (size_t iNode = 0; iNode < listOfNodes.size(); iNode++){
-				delete listOfNodes.at(iNode);
+			if (myMgr) {
+				listOfNodes.clear();
+		
+				myMgr->PortsClose();
+
+				myMgr = nullptr;
+
+				RCLCPP_INFO(this->get_logger(), "Supervisor and all resources have been cleaned up.");
 			}
-			listOfNodes.clear();
-
-			// Close down the ports
-			myMgr->PortsClose();
-
-			RCLCPP_INFO(this->get_logger(), "Supervisor and all resources have been cleaned up.");
 		}
+	
 };
 
 int main(int argc, char* argv[])
@@ -385,13 +382,17 @@ int main(int argc, char* argv[])
 
 	// Fire up the ROS2 node and action server
 	rclcpp::init(argc, argv);
-  	auto node = std::make_shared<WireFeedDistanceServer>();
-	//msgUser("Multithreaded K2 instance starting. Press Enter to continue.");
 
 	RCLCPP_INFO(rclcpp::get_logger("WireFeed"), "----------- RUNNING TEKNIC NODE -----------");
 
-	rclcpp::spin(node);
+	{
+		auto node = std::make_shared<WireFeedDistanceServer>();
+		rclcpp::spin(node);
+		node.reset();
+	}
+
 	rclcpp::shutdown();
+
 	return 0;
 }
 

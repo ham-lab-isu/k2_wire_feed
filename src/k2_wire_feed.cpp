@@ -121,7 +121,6 @@ class WireFeedDistanceServer : public rclcpp::Node {
 					execution_threads_[i].join();
 				}
 			}
-
 			quit_supervisor();
 		}
 
@@ -337,20 +336,30 @@ class WireFeedDistanceServer : public rclcpp::Node {
 			theNode.Motion.VelLimit = goal->velocity;
 			COUNTS_PER_REV = theNode.Info.PositioningResolution.Value();
 
-			theNode.Motion.MovePosnStart(goal->distance * COUNTS_PER_REV);
+			double distance_commanded = (goal->distance);
+            theNode.Motion.AddToPosition(-theNode.Motion.PosnMeasured.Value());
+			theNode.Motion.MovePosnStart(distance_commanded*COUNTS_PER_REV);
 			
 			double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(goal->distance * COUNTS_PER_REV) + 100;
 			double start_time = myMgr->TimeStampMsec();
+			double distance_progress;
 
 			while (!theNode.Motion.MoveWentDone() && myMgr->TimeStampMsec() < start_time + timeout) {
 				if (!rclcpp::ok()) {
 					RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
+					result->success = false;
+					result->message = "Wire feed was NOT sucessful";
 					goal_handle->abort(result);
 					return;
 				}
 
 				// Provide periodic feedback
-				feedback->current_distance = theNode.Motion.PosnMeasured.Value() / COUNTS_PER_REV;
+				distance_progress = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
+				feedback->current_distance = distance_progress;
+				feedback->percent = distance_progress / distance_commanded * 100;
+				feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
+
+
 				goal_handle->publish_feedback(feedback);
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
 			}
@@ -361,6 +370,7 @@ class WireFeedDistanceServer : public rclcpp::Node {
 			goal_handle->succeed(result);
 		}
 	
+		// Terminate the supervisor; only called on class destruction
 		void quit_supervisor(){
 			if (myMgr) {
 				listOfNodes.clear();

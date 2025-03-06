@@ -121,6 +121,7 @@ class WireFeedDistanceServer : public rclcpp::Node {
 					execution_threads_[i].join();
 				}
 			}
+			quit_supervisor();
 		}
 
 	private:
@@ -266,6 +267,15 @@ class WireFeedDistanceServer : public rclcpp::Node {
 		rclcpp_action::CancelResponse handle_distance_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<WireFeed>> goal_handle) {
 			RCLCPP_INFO(this->get_logger(), "Received request to cancel goal.");
 			(void)goal_handle;
+
+			// get the node object
+			auto goal = goal_handle->get_goal();
+        	int axis = goal->axis_number;
+			//INode &theNode = myPort.Nodes(axis);
+
+			// call the Node Stop method; clear it immediately
+			//theNode.Motion.NodeStop(0x11);
+			//theNode.Motion.NodeStopClear();
 			return rclcpp_action::CancelResponse::ACCEPT;
 		}
 
@@ -326,20 +336,30 @@ class WireFeedDistanceServer : public rclcpp::Node {
 			theNode.Motion.VelLimit = goal->velocity;
 			COUNTS_PER_REV = theNode.Info.PositioningResolution.Value();
 
-			theNode.Motion.MovePosnStart(goal->distance * COUNTS_PER_REV);
+			double distance_commanded = (goal->distance);
+            theNode.Motion.AddToPosition(-theNode.Motion.PosnMeasured.Value());
+			theNode.Motion.MovePosnStart(distance_commanded*COUNTS_PER_REV);
 			
 			double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(goal->distance * COUNTS_PER_REV) + 100;
 			double start_time = myMgr->TimeStampMsec();
+			double distance_progress;
 
 			while (!theNode.Motion.MoveWentDone() && myMgr->TimeStampMsec() < start_time + timeout) {
 				if (!rclcpp::ok()) {
 					RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
+					result->success = false;
+					result->message = "Wire feed was NOT sucessful";
 					goal_handle->abort(result);
 					return;
 				}
 
 				// Provide periodic feedback
-				feedback->current_distance = theNode.Motion.PosnMeasured.Value() / COUNTS_PER_REV;
+				distance_progress = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
+				feedback->current_distance = distance_progress;
+				feedback->percent = distance_progress / distance_commanded * 100;
+				feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
+
+
 				goal_handle->publish_feedback(feedback);
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
 			}
@@ -349,24 +369,20 @@ class WireFeedDistanceServer : public rclcpp::Node {
 			result->message = "Wire feed move was successful";
 			goal_handle->succeed(result);
 		}
-
+	
+		// Terminate the supervisor; only called on class destruction
 		void quit_supervisor(){
-			//theSuper->Quit();
-			//theSuper->Terminate();
-			//delete theSuper;
-			//theSuper = nullptr;
-						
-			// Delete the list of axes that were created
-			for (size_t iNode = 0; iNode < listOfNodes.size(); iNode++){
-				delete listOfNodes.at(iNode);
+			if (myMgr) {
+				listOfNodes.clear();
+		
+				myMgr->PortsClose();
+
+				myMgr = nullptr;
+
+				RCLCPP_INFO(this->get_logger(), "Supervisor and all resources have been cleaned up.");
 			}
-			listOfNodes.clear();
-
-			// Close down the ports
-			myMgr->PortsClose();
-
-			RCLCPP_INFO(this->get_logger(), "Supervisor and all resources have been cleaned up.");
 		}
+	
 };
 
 int main(int argc, char* argv[])
@@ -376,13 +392,17 @@ int main(int argc, char* argv[])
 
 	// Fire up the ROS2 node and action server
 	rclcpp::init(argc, argv);
-  	auto node = std::make_shared<WireFeedDistanceServer>();
-	//msgUser("Multithreaded K2 instance starting. Press Enter to continue.");
 
 	RCLCPP_INFO(rclcpp::get_logger("WireFeed"), "----------- RUNNING TEKNIC NODE -----------");
 
-	rclcpp::spin(node);
+	{
+		auto node = std::make_shared<WireFeedDistanceServer>();
+		rclcpp::spin(node);
+		node.reset();
+	}
+
 	rclcpp::shutdown();
+
 	return 0;
 }
 

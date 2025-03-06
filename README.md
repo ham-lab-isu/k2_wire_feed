@@ -3,6 +3,10 @@ ROS-based wire feeding via Teknic SC-series Clearpath motors
 
 the coding practices are bad, but so it goes
 
+dependencies include 
+- realtime tools (installed with ros2 controls: ```sudo apt install ros-humble-ros2-control ros-humble-ros2-controllers```)
+- Teknic's sFoundation library. Download the tarball and follow instructions. You will need to do some funky stuff to get the driver to work via Serial, but their documentation is good. Like really good. Follow it to the letter.
+
 the WireFeedDistanceServer node opens an action server for requesting motion specified by wire feed actions. These actions are defined as
 ```
 # Goal

@@ -174,7 +174,7 @@ class WireFeedDistanceServer : public rclcpp::Node {
 				for (size_t i = 0; i < portCount; i++) {
 					IPort &myPort = myMgr->Ports(i);
 
-					printf(" Port[%d]: state=%d, nodes=%d\n",
+					RCLCPP_INFO(this->get_logger(), " Port[%d]: state=%d, nodes=%d\n",
 						myPort.NetNumber(), myPort.OpenState(), myPort.NodeCount());
 				}
 			}

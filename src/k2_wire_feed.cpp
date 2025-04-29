@@ -93,10 +93,10 @@ using WireFeed = k2_action::action::WireFeed;
 class WireFeedDistanceServer : public rclcpp::Node {
 	public:		
 		// Constructor: build the action server and bind the major functions: handle_goal, handle_cancel, and handle_accepted
-		WireFeedDistanceServer() : Node("wire_feed_distance_server") {
+		WireFeedDistanceServer() : Node("wire_feed_command_server") {
 			distance_server_ = rclcpp_action::create_server<WireFeed>(
 				this,
-				"wire_feed_distance",
+				"wire_feed_commands",
 				std::bind(&WireFeedDistanceServer::handle_distance_goal, this, std::placeholders::_1, std::placeholders::_2),
 				std::bind(&WireFeedDistanceServer::handle_distance_cancel, this, std::placeholders::_1),
 				std::bind(&WireFeedDistanceServer::handle_distance_accepted, this, std::placeholders::_1)

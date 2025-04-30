@@ -398,7 +398,13 @@ class WireFeedDistanceServer : public rclcpp::Node {
 					}
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
 				}
-			} else {
+			} else if(goal->motion_type=="stop"){
+				theNode.Motion.NodeStop(STOP_TYPE_RAMP);
+				theNode.Motion.NodeStopClear();
+		
+				result->success = true;
+				result->message = "Stop requested";
+			}else {
 				RCLCPP_ERROR(this->get_logger(), "Unknown motion type requested: %d", goal->motion_type);
 				result->success = false;
 				result->message = "Invalid motion type";

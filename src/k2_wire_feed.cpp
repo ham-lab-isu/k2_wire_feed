@@ -328,89 +328,109 @@ class WireFeedDistanceServer : public rclcpp::Node {
 
 			RCLCPP_INFO(this->get_logger(), "Starting wire feed for axis %d...", axis);
 
-			// this assumes a single SC hub; iPort will need to be linked to each hub/node combo
-			IPort &myPort = myMgr->Ports(0);
-			INode &theNode = myPort.Nodes(axis);
-			
-			theNode.Motion.MoveWentDone();
-			theNode.AccUnit(INode::RPM_PER_SEC);
-			theNode.VelUnit(INode::RPM);
-			theNode.Motion.AccLimit = goal->acceleration;
-			theNode.Motion.VelLimit = goal->velocity;
-			COUNTS_PER_REV = theNode.Info.PositioningResolution.Value();
-
-			// differentiate between move types:
-			// "position" - handle a position move
-			// "velocity" - handle a velocity move
-			if(goal->motion_type=="position"){
-				// ---- Position move ----
-				double distance_commanded = (goal->distance);
-				theNode.Motion.AddToPosition(-theNode.Motion.PosnMeasured.Value());
-				theNode.Motion.MovePosnStart(distance_commanded*COUNTS_PER_REV);
+			try {
+				// this assumes a single SC hub; iPort will need to be linked to each hub/node combo
+				IPort &myPort = myMgr->Ports(0);
+				INode &theNode = myPort.Nodes(axis);
 				
-				double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(goal->distance * COUNTS_PER_REV) + 100;
-				double start_time = myMgr->TimeStampMsec();
-				double distance_progress;
+				theNode.Motion.MoveWentDone();
+				theNode.AccUnit(INode::RPM_PER_SEC);
+				theNode.VelUnit(INode::RPM);
+				theNode.Motion.AccLimit = goal->acceleration;
+				theNode.Motion.VelLimit = goal->velocity;
+				COUNTS_PER_REV = theNode.Info.PositioningResolution.Value();
 
-				while (!theNode.Motion.MoveWentDone() && myMgr->TimeStampMsec() < start_time + timeout) {
-					if (!rclcpp::ok()) {
-						RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
-						result->success = false;
-						result->message = "Wire feed was NOT sucessful";
-						goal_handle->abort(result);
-						return;
+				// Debugging prompt
+				RCLCPP_INFO(this->get_logger(), "Node[%d] Ready: %d, Enabled: %d, Alerts: %d", 
+					axis,
+					theNode.Motion.IsReady(),
+					theNode.Status.IsReady(),
+					theNode.Status.IsReady()
+				);
+
+				// differentiate between move types:
+				// "position" - handle a position move
+				// "velocity" - handle a velocity move
+				if(goal->motion_type=="position"){
+					// ---- Position move ----
+					double distance_commanded = (goal->distance);
+					theNode.Motion.AddToPosition(-theNode.Motion.PosnMeasured.Value());
+					theNode.Motion.MovePosnStart(distance_commanded*COUNTS_PER_REV);
+					
+					double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(goal->distance * COUNTS_PER_REV) + 100;
+					double start_time = myMgr->TimeStampMsec();
+					double distance_progress;
+
+					while (!theNode.Motion.MoveWentDone() && myMgr->TimeStampMsec() < start_time + timeout) {
+						if (!rclcpp::ok()) {
+							RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
+							result->success = false;
+							result->message = "Wire feed was NOT sucessful";
+							goal_handle->abort(result);
+							return;
+						}
+
+						// Provide periodic feedback
+						distance_progress = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
+						feedback->current_distance = distance_progress;
+						feedback->percent = distance_progress / distance_commanded * 100;
+						feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
+
+						goal_handle->publish_feedback(feedback);
+						std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
 					}
+					RCLCPP_INFO(this->get_logger(), "Wire feed completed.");
+					result->success = true;
+					result->message = "Wire feed move was successful";
+					goal_handle->succeed(result);
 
-					// Provide periodic feedback
-					distance_progress = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
-					feedback->current_distance = distance_progress;
-					feedback->percent = distance_progress / distance_commanded * 100;
-					feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
+				} else if(goal->motion_type=="velocity"){
+					// ---- Velocity move ----
+					RCLCPP_INFO(this->get_logger(), "Starting velocity move...");
+					theNode.Motion.MoveVelStart(goal->velocity);
 
-					goal_handle->publish_feedback(feedback);
-					std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
-				}
-				RCLCPP_INFO(this->get_logger(), "Wire feed completed.");
-				result->success = true;
-				result->message = "Wire feed move was successful";
-				goal_handle->succeed(result);
-
-			} else if(goal->motion_type=="velocity"){
-				// ---- Velocity move ----
-				RCLCPP_INFO(this->get_logger(), "Starting velocity move...");
-				theNode.Motion.MoveVelStart(goal->velocity);
-
-				// Maintain velocity until goal is cancelled
-				while (rclcpp::ok()) {
-					// Feedback (speed or torque)
-					feedback->current_distance = theNode.Motion.PosnMeasured.Value() / COUNTS_PER_REV;
-					feedback->percent = 0.0; // maybe unused in velocity mode
-					feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
-					goal_handle->publish_feedback(feedback);
-		
-					// Check if canceled
-					if (goal_handle->is_canceling()) {
-						RCLCPP_WARN(this->get_logger(), "Velocity move canceled.");
-						theNode.Motion.NodeStop(STOP_TYPE_RAMP);
-						theNode.Motion.NodeStopClear();
-		
-						result->success = false;
-						result->message = "Velocity move canceled";
-						goal_handle->canceled(result);
-						return;
+					// Maintain velocity until goal is cancelled
+					while (rclcpp::ok()) {
+						// Feedback (speed or torque)
+						feedback->current_distance = theNode.Motion.PosnMeasured.Value() / COUNTS_PER_REV;
+						feedback->percent = 0.0; // maybe unused in velocity mode
+						feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
+						goal_handle->publish_feedback(feedback);
+			
+						// Check if canceled
+						if (goal_handle->is_canceling()) {
+							RCLCPP_WARN(this->get_logger(), "Velocity move canceled.");
+							theNode.Motion.NodeStop(STOP_TYPE_RAMP);
+							theNode.Motion.NodeStopClear();
+			
+							result->success = false;
+							result->message = "Velocity move canceled";
+							goal_handle->canceled(result);
+							return;
+						}
+						std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
 					}
-					std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
+				} else if(goal->motion_type=="stop"){
+					theNode.Motion.NodeStop(STOP_TYPE_RAMP);
+					theNode.Motion.NodeStopClear();
+			
+					result->success = true;
+					result->message = "Stop requested";
+				}else {
+					RCLCPP_ERROR(this->get_logger(), "Unknown motion type requested: %d", goal->motion_type);
+					result->success = false;
+					result->message = "Invalid motion type";
+					goal_handle->abort(result);
 				}
-			} else if(goal->motion_type=="stop"){
-				theNode.Motion.NodeStop(STOP_TYPE_RAMP);
-				theNode.Motion.NodeStopClear();
-		
-				result->success = true;
-				result->message = "Stop requested";
-			}else {
-				RCLCPP_ERROR(this->get_logger(), "Unknown motion type requested: %d", goal->motion_type);
+			} catch (mnErr& theErr) {
+				RCLCPP_ERROR(this->get_logger(), "Caught Teknic Exception: %s", theErr.TheAddr);
 				result->success = false;
-				result->message = "Invalid motion type";
+				result->message = std::string("Teknic exception: %s, %s", theErr.ErrorCode, theErr.ErrorMsg);
+				goal_handle->abort(result);
+			} catch (const std::exception& e) {
+				RCLCPP_ERROR(this->get_logger(), "Caught std::exception: %s", e.what());
+				result->success = false;
+				result->message = "Std exception: " + std::string(e.what());
 				goal_handle->abort(result);
 			}
 		}

@@ -31,6 +31,7 @@ include_directories(
 
 # Add executable and libraries
 add_executable(k2_wf src/k2_wire_feed.cpp)
+add_executable(k2_wf_sim src/k2_wire_feed_sim.cpp)
 #add_dependencies(k2_wf ${PROJECT_NAME}_generate_interfaces)
 #add_library(supervisor src/Supervisor.cpp)
 #add_library(axis src/Axis.cpp)
@@ -62,6 +63,13 @@ ament_target_dependencies(k2_wf PUBLIC
   realtime_tools
 )
 
+ament_target_dependencies(k2_wf_sim PUBLIC
+  rclcpp
+  rclcpp_action
+  std_msgs
+  k2_action
+)
+
 # Set compilation features
 target_compile_features(k2_wf PUBLIC cxx_std_17)
 
@@ -80,7 +88,7 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 install(
-  TARGETS k2_wf
+  TARGETS k2_wf k2_wf_sim
   DESTINATION lib/${PROJECT_NAME}
 )
 

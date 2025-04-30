@@ -93,10 +93,13 @@ using WireFeed = k2_action::action::WireFeed;
 class WireFeedDistanceServer : public rclcpp::Node {
 	public:		
 		// Constructor: build the action server and bind the major functions: handle_goal, handle_cancel, and handle_accepted
-		WireFeedDistanceServer() : Node("wire_feed_distance_server") {
+		WireFeedDistanceServer() : Node("wire_feed_command_server") {
+
+			// Get the simulation launch value
+
 			distance_server_ = rclcpp_action::create_server<WireFeed>(
 				this,
-				"wire_feed_distance",
+				"wire_feed_commands",
 				std::bind(&WireFeedDistanceServer::handle_distance_goal, this, std::placeholders::_1, std::placeholders::_2),
 				std::bind(&WireFeedDistanceServer::handle_distance_cancel, this, std::placeholders::_1),
 				std::bind(&WireFeedDistanceServer::handle_distance_accepted, this, std::placeholders::_1)
@@ -336,38 +339,80 @@ class WireFeedDistanceServer : public rclcpp::Node {
 			theNode.Motion.VelLimit = goal->velocity;
 			COUNTS_PER_REV = theNode.Info.PositioningResolution.Value();
 
-			double distance_commanded = (goal->distance);
-            theNode.Motion.AddToPosition(-theNode.Motion.PosnMeasured.Value());
-			theNode.Motion.MovePosnStart(distance_commanded*COUNTS_PER_REV);
-			
-			double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(goal->distance * COUNTS_PER_REV) + 100;
-			double start_time = myMgr->TimeStampMsec();
-			double distance_progress;
+			// differentiate between move types:
+			// "position" - handle a position move
+			// "velocity" - handle a velocity move
+			if(goal->motion_type=="position"){
+				// ---- Position move ----
+				double distance_commanded = (goal->distance);
+				theNode.Motion.AddToPosition(-theNode.Motion.PosnMeasured.Value());
+				theNode.Motion.MovePosnStart(distance_commanded*COUNTS_PER_REV);
+				
+				double timeout = theNode.Motion.Adv.MovePosnHeadTailDurationMsec(goal->distance * COUNTS_PER_REV) + 100;
+				double start_time = myMgr->TimeStampMsec();
+				double distance_progress;
 
-			while (!theNode.Motion.MoveWentDone() && myMgr->TimeStampMsec() < start_time + timeout) {
-				if (!rclcpp::ok()) {
-					RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
-					result->success = false;
-					result->message = "Wire feed was NOT sucessful";
-					goal_handle->abort(result);
-					return;
+				while (!theNode.Motion.MoveWentDone() && myMgr->TimeStampMsec() < start_time + timeout) {
+					if (!rclcpp::ok()) {
+						RCLCPP_WARN(this->get_logger(), "ROS shutdown detected, aborting goal.");
+						result->success = false;
+						result->message = "Wire feed was NOT sucessful";
+						goal_handle->abort(result);
+						return;
+					}
+
+					// Provide periodic feedback
+					distance_progress = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
+					feedback->current_distance = distance_progress;
+					feedback->percent = distance_progress / distance_commanded * 100;
+					feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
+
+					goal_handle->publish_feedback(feedback);
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
 				}
+				RCLCPP_INFO(this->get_logger(), "Wire feed completed.");
+				result->success = true;
+				result->message = "Wire feed move was successful";
+				goal_handle->succeed(result);
 
-				// Provide periodic feedback
-				distance_progress = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
-				feedback->current_distance = distance_progress;
-				feedback->percent = distance_progress / distance_commanded * 100;
-				feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
+			} else if(goal->motion_type=="velocity"){
+				// ---- Velocity move ----
+				RCLCPP_INFO(this->get_logger(), "Starting velocity move...");
+				theNode.Motion.MoveVelStart(goal->velocity);
 
-
-				goal_handle->publish_feedback(feedback);
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
+				// Maintain velocity until goal is cancelled
+				while (rclcpp::ok()) {
+					// Feedback (speed or torque)
+					feedback->current_distance = theNode.Motion.PosnMeasured.Value() / COUNTS_PER_REV;
+					feedback->percent = 0.0; // maybe unused in velocity mode
+					feedback->torque_feedback = theNode.Motion.TrqMeasured.Value();
+					goal_handle->publish_feedback(feedback);
+		
+					// Check if canceled
+					if (goal_handle->is_canceling()) {
+						RCLCPP_WARN(this->get_logger(), "Velocity move canceled.");
+						theNode.Motion.NodeStop(STOP_TYPE_RAMP);
+						theNode.Motion.NodeStopClear();
+		
+						result->success = false;
+						result->message = "Velocity move canceled";
+						goal_handle->canceled(result);
+						return;
+					}
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Publish feedback every 100ms
+				}
+			} else if(goal->motion_type=="stop"){
+				theNode.Motion.NodeStop(STOP_TYPE_RAMP);
+				theNode.Motion.NodeStopClear();
+		
+				result->success = true;
+				result->message = "Stop requested";
+			}else {
+				RCLCPP_ERROR(this->get_logger(), "Unknown motion type requested: %d", goal->motion_type);
+				result->success = false;
+				result->message = "Invalid motion type";
+				goal_handle->abort(result);
 			}
-
-			RCLCPP_INFO(this->get_logger(), "Wire feed completed.");
-			result->success = true;
-			result->message = "Wire feed move was successful";
-			goal_handle->succeed(result);
 		}
 	
 		// Terminate the supervisor; only called on class destruction

@@ -72,24 +72,37 @@ private:
             goal_handle->succeed(result);
 
         } else if (goal->motion_type == "velocity") {
-            for (int i = 0; i < 30; ++i) {
-                if (goal_handle->is_canceling()) {
-                    result->success = false;
-                    result->message = "Simulated velocity move canceled.";
-                    goal_handle->canceled(result);
-                    return;
-                }
+            // For a velocity move
+            feedback->current_distance = 0.0;
 
+            while (!goal_handle->is_canceling()){
+                // run a continuous velocity move until the move is cancelled
                 feedback->current_distance += goal->velocity * 0.1;  // simplistic approximation
                 feedback->percent = 0.0;
                 feedback->torque_feedback = 0.05;
-                //goal_handle->publish_feedback(feedback);
+                goal_handle->publish_feedback(feedback);
+
+                static int counter = 0;
+                if (++counter % 10 == 0) {
+                    RCLCPP_INFO(this->get_logger(), "Simulated feed at distance: %.2f", feedback->current_distance);
+                }
+
+
+                if (!rclcpp::ok()) {
+                    result->success = false;
+                    result->message = "ROS shutdown detected.";
+                    goal_handle->abort(result);
+                    return;
+                }
+
                 std::this_thread::sleep_for(100ms);
+
             }
 
             result->success = true;
-            result->message = "Simulated velocity move completed.";
-            goal_handle->succeed(result);
+            result->message = "Simulated velocity move canceled.";
+            goal_handle->canceled(result);
+            return;
         } else {
             RCLCPP_WARN(this->get_logger(), "Unknown motion type: %s", goal->motion_type.c_str());
             result->success = false;

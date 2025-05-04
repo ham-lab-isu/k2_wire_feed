@@ -22,6 +22,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <std_msgs/msg/string.hpp>
 #include "k2_action/action/wire_feed.hpp"
+#include "k2_action/msg/wire_feed_status.hpp"
 #include "pubSysCls.h"
 #include <thread>
 #include <queue>
@@ -92,7 +93,7 @@ string CurrentTimeStr() {
 using WireFeed = k2_action::action::WireFeed;
 
 class WireFeedDistanceServer : public rclcpp::Node {
-	public:		
+	public:			
 		// Constructor: build the action server and bind the major functions: handle_goal, handle_cancel, and handle_accepted
 		WireFeedDistanceServer() : Node("wire_feed_command_server") {
 
@@ -106,7 +107,7 @@ class WireFeedDistanceServer : public rclcpp::Node {
 				std::bind(&WireFeedDistanceServer::handle_distance_accepted, this, std::placeholders::_1)
 			);
 
-			RCLCPP_INFO(this->get_logger(), "WireFeed Action Server is up and running!");
+			RCLCPP_INFO(this->get_logger(), "WireFeed Action Server and Status publisher are up and running!");
 
 			// Initialize the motor axes
 			initialize_axes();
@@ -114,7 +115,15 @@ class WireFeedDistanceServer : public rclcpp::Node {
 			// Initialize execution threads for each axis
 			for (int i = 0; i < MAX_MOTORS; ++i) {
 				execution_threads_[i] = std::thread(&WireFeedDistanceServer::process_goals, this, i);
-			}		
+			}
+
+			status_pub_ = this->create_publisher<k2_action::msg::WireFeedStatus>("topic", 10);
+			// create the safety status publisher timer with callback
+			pub_timer_ = this->create_wall_timer(
+				std::chrono::milliseconds(100), // 10 Hz
+				std::bind(&WireFeedDistanceServer::publish_status, this)
+			);
+
 		}
 
 		~WireFeedDistanceServer() {
@@ -154,6 +163,10 @@ class WireFeedDistanceServer : public rclcpp::Node {
 		// Assume that the nodes are of the right type and that this app has full control
 		bool nodeTypesGood = true, accessLvlsGood = true; 
 
+		// create the status publisher and timer
+		rclcpp::Publisher<k2_action::msg::WireFeedStatus>::SharedPtr status_pub_;
+		rclcpp::TimerBase::SharedPtr pub_timer_;
+
 		// Method to initialize the SC Hubs as ports and motors as nodes
 		void initialize_axes(){
 			RCLCPP_INFO(this->get_logger(), "Initializing axes...");
@@ -186,6 +199,7 @@ class WireFeedDistanceServer : public rclcpp::Node {
 						myPort.NetNumber(), myPort.OpenState(), myPort.NodeCount());
 				}
 			}
+
 			else {
 				printf("Unable to locate SC hub port\n");
 
@@ -437,6 +451,28 @@ class WireFeedDistanceServer : public rclcpp::Node {
 				result->success = false;
 				result->message = "Std exception: " + std::string(e.what());
 				goal_handle->abort(result);
+			}
+		}
+
+		void publish_status(){
+			while(running_){
+				for (size_t iPort = 0; iPort < portCount; iPort++){
+					// loop through the ports
+					IPort &myPort = myMgr->Ports(iPort);
+					for (unsigned iNode = 0; iNode < myPort.NodeCount(); iNode++){
+						// loop through the nodes
+						k2_action::msg::WireFeedStatus msg;
+
+						// Get a reference to the node, to make accessing it easier
+						INode &theNode = myPort.Nodes(iNode);
+
+						msg.position_reading = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
+						msg.velocity_reading = theNode.Motion.VelMeasured.Value()/COUNTS_PER_REV;
+						msg.torque_reading = theNode.Motion.TrqMeasured.Value();
+
+						status_pub_->publish(msg);
+					}
+				}
 			}
 		}
 	

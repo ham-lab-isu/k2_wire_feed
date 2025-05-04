@@ -117,7 +117,7 @@ class WireFeedDistanceServer : public rclcpp::Node {
 				execution_threads_[i] = std::thread(&WireFeedDistanceServer::process_goals, this, i);
 			}
 
-			status_pub_ = this->create_publisher<k2_action::msg::WireFeedStatus>("topic", 10);
+			status_pub_ = this->create_publisher<k2_action::msg::WireFeedStatus>("motion_feedback", 10);
 			// create the safety status publisher timer with callback
 			pub_timer_ = this->create_wall_timer(
 				std::chrono::milliseconds(100), // 10 Hz
@@ -466,6 +466,7 @@ class WireFeedDistanceServer : public rclcpp::Node {
 						// Get a reference to the node, to make accessing it easier
 						INode &theNode = myPort.Nodes(iNode);
 
+						msg.axis_number = iNode;
 						msg.position_reading = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
 						msg.velocity_reading = theNode.Motion.VelMeasured.Value()/COUNTS_PER_REV;
 						msg.torque_reading = theNode.Motion.TrqMeasured.Value();

@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include "k2_action/action/wire_feed.hpp"
+#include "k2_action/msg/wire_feed_status.hpp"
 #include <memory>
 #include <thread>
 #include <chrono>
@@ -20,10 +21,21 @@ public:
             std::bind(&WireFeedSimServer::handle_cancel, this, std::placeholders::_1),
             std::bind(&WireFeedSimServer::handle_accepted, this, std::placeholders::_1)
         );
+
+        status_pub_ = this->create_publisher<k2_action::msg::WireFeedStatus>("motion_feedback", 10);
+        // create the safety status publisher timer with callback
+        pub_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(100), // 10 Hz
+            std::bind(&WireFeedSimServer::publish_status, this)
+        );
     }
 
 private:
     rclcpp_action::Server<WireFeed>::SharedPtr distance_server_;
+
+    // create the status publisher and timer
+	rclcpp::Publisher<k2_action::msg::WireFeedStatus>::SharedPtr status_pub_;
+	rclcpp::TimerBase::SharedPtr pub_timer_;
 
     rclcpp_action::GoalResponse handle_goal(const rclcpp_action::GoalUUID &, std::shared_ptr<const WireFeed::Goal> goal) {
         RCLCPP_INFO(this->get_logger(), "Received simulated goal: axis=%d, motion_type=%s, distance=%.2f, velocity=%.2f",
@@ -110,6 +122,25 @@ private:
             goal_handle->abort(result);
         }
     }
+
+    void publish_status(){
+        while(rclcpp::ok){
+            for (size_t iPort = 0; iPort < 1; iPort++){
+                // loop through the ports
+                for (unsigned iNode = 0; iNode < 4; iNode++){
+                    // loop through the nodes
+                    k2_action::msg::WireFeedStatus msg;
+
+                    msg.axis_number = iNode;
+                    msg.position_reading = iNode*iPort;
+                    msg.velocity_reading = iNode*iPort;
+                    msg.torque_reading = 99.0;
+
+                    status_pub_->publish(msg);
+                }
+            }
+        }
+    };
 };
 
 int main(int argc, char **argv) {

@@ -25,13 +25,17 @@ public:
         status_pub_ = this->create_publisher<k2_action::msg::WireFeedStatus>("motion_feedback", 10);
         // create the safety status publisher timer with callback
         pub_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(100), // 10 Hz
+            std::chrono::milliseconds(100),
             std::bind(&WireFeedSimServer::publish_status, this)
         );
     }
 
 private:
     rclcpp_action::Server<WireFeed>::SharedPtr distance_server_;
+
+    double torque_value_ = 0.0;
+    bool torque_increasing_ = true;
+
 
     // create the status publisher and timer
 	rclcpp::Publisher<k2_action::msg::WireFeedStatus>::SharedPtr status_pub_;
@@ -99,7 +103,6 @@ private:
                     RCLCPP_INFO(this->get_logger(), "Simulated feed at distance: %.2f", feedback->current_distance);
                 }
 
-
                 if (!rclcpp::ok()) {
                     result->success = false;
                     result->message = "ROS shutdown detected.";
@@ -108,9 +111,7 @@ private:
                 }
 
                 std::this_thread::sleep_for(100ms);
-
             }
-
             result->success = true;
             result->message = "Simulated velocity move canceled.";
             goal_handle->canceled(result);
@@ -127,17 +128,28 @@ private:
         while(rclcpp::ok){
             for (size_t iPort = 0; iPort < 1; iPort++){
                 // loop through the ports
-                for (unsigned iNode = 0; iNode < 4; iNode++){
-                    // loop through the nodes
+                for (unsigned iNode = 0; iNode < 4; iNode++) {
                     k2_action::msg::WireFeedStatus msg;
-
                     msg.axis_number = iNode;
-                    msg.position_reading = iNode*iPort;
-                    msg.velocity_reading = iNode*iPort;
-                    msg.torque_reading = 99.0;
-
+                    msg.position_reading = iNode * iPort;
+                    msg.velocity_reading = iNode * iPort;
+                    msg.torque_reading = torque_value_;
+                
                     status_pub_->publish(msg);
                 }
+                
+                // After loop, update torque for next time
+                if (torque_increasing_) {
+                    torque_value_ += 1.0;
+                    if (torque_value_ >= 100.0) {
+                        torque_increasing_ = false;
+                    }
+                } else {
+                    torque_value_ -= 1.0;
+                    if (torque_value_ <= 0.0) {
+                        torque_increasing_ = true;
+                    }
+                }                
             }
         }
     };

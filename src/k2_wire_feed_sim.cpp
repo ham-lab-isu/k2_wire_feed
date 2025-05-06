@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include "k2_action/action/wire_feed.hpp"
+#include "k2_action/msg/wire_feed_status.hpp"
 #include <memory>
 #include <thread>
 #include <chrono>
@@ -20,10 +21,25 @@ public:
             std::bind(&WireFeedSimServer::handle_cancel, this, std::placeholders::_1),
             std::bind(&WireFeedSimServer::handle_accepted, this, std::placeholders::_1)
         );
+
+        status_pub_ = this->create_publisher<k2_action::msg::WireFeedStatus>("motion_feedback", 10);
+        // create the safety status publisher timer with callback
+        pub_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(100),
+            std::bind(&WireFeedSimServer::publish_status, this)
+        );
     }
 
 private:
     rclcpp_action::Server<WireFeed>::SharedPtr distance_server_;
+
+    double torque_value_ = 0.0;
+    bool torque_increasing_ = true;
+
+
+    // create the status publisher and timer
+	rclcpp::Publisher<k2_action::msg::WireFeedStatus>::SharedPtr status_pub_;
+	rclcpp::TimerBase::SharedPtr pub_timer_;
 
     rclcpp_action::GoalResponse handle_goal(const rclcpp_action::GoalUUID &, std::shared_ptr<const WireFeed::Goal> goal) {
         RCLCPP_INFO(this->get_logger(), "Received simulated goal: axis=%d, motion_type=%s, distance=%.2f, velocity=%.2f",
@@ -72,24 +88,34 @@ private:
             goal_handle->succeed(result);
 
         } else if (goal->motion_type == "velocity") {
-            for (int i = 0; i < 30; ++i) {
-                if (goal_handle->is_canceling()) {
-                    result->success = false;
-                    result->message = "Simulated velocity move canceled.";
-                    goal_handle->canceled(result);
-                    return;
-                }
+            // For a velocity move
+            feedback->current_distance = 0.0;
 
+            while (!goal_handle->is_canceling()){
+                // run a continuous velocity move until the move is cancelled
                 feedback->current_distance += goal->velocity * 0.1;  // simplistic approximation
                 feedback->percent = 0.0;
                 feedback->torque_feedback = 0.05;
-                //goal_handle->publish_feedback(feedback);
+                goal_handle->publish_feedback(feedback);
+
+                static int counter = 0;
+                if (++counter % 10 == 0) {
+                    RCLCPP_INFO(this->get_logger(), "Simulated feed at distance: %.2f", feedback->current_distance);
+                }
+
+                if (!rclcpp::ok()) {
+                    result->success = false;
+                    result->message = "ROS shutdown detected.";
+                    goal_handle->abort(result);
+                    return;
+                }
+
                 std::this_thread::sleep_for(100ms);
             }
-
             result->success = true;
-            result->message = "Simulated velocity move completed.";
-            goal_handle->succeed(result);
+            result->message = "Simulated velocity move canceled.";
+            goal_handle->canceled(result);
+            return;
         } else {
             RCLCPP_WARN(this->get_logger(), "Unknown motion type: %s", goal->motion_type.c_str());
             result->success = false;
@@ -97,6 +123,36 @@ private:
             goal_handle->abort(result);
         }
     }
+
+    void publish_status(){
+        while(rclcpp::ok){
+            for (size_t iPort = 0; iPort < 1; iPort++){
+                // loop through the ports
+                for (unsigned iNode = 0; iNode < 4; iNode++) {
+                    k2_action::msg::WireFeedStatus msg;
+                    msg.axis_number = iNode;
+                    msg.position_reading = iNode * iPort;
+                    msg.velocity_reading = iNode * iPort;
+                    msg.torque_reading = torque_value_;
+                
+                    status_pub_->publish(msg);
+                }
+                
+                // After loop, update torque for next time
+                if (torque_increasing_) {
+                    torque_value_ += 1.0;
+                    if (torque_value_ >= 100.0) {
+                        torque_increasing_ = false;
+                    }
+                } else {
+                    torque_value_ -= 1.0;
+                    if (torque_value_ <= 0.0) {
+                        torque_increasing_ = true;
+                    }
+                }                
+            }
+        }
+    };
 };
 
 int main(int argc, char **argv) {

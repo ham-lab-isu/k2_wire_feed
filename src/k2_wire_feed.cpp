@@ -454,25 +454,23 @@ class WireFeedDistanceServer : public rclcpp::Node {
 			}
 		}
 
-		void publish_status(){
-			while(running_){
-				for (size_t iPort = 0; iPort < portCount; iPort++){
-					// loop through the ports
-					IPort &myPort = myMgr->Ports(iPort);
-					for (unsigned iNode = 0; iNode < myPort.NodeCount(); iNode++){
-						// loop through the nodes
-						k2_action::msg::WireFeedStatus msg;
+		void publish_status() {
+			for (size_t iPort = 0; iPort < portCount; iPort++) {
+				// loop through the ports
+				IPort &myPort = myMgr->Ports(iPort);
+				for (unsigned iNode = 0; iNode < myPort.NodeCount(); iNode++) {
+					// loop through the nodes
+					k2_action::msg::WireFeedStatus msg;
 
-						// Get a reference to the node, to make accessing it easier
-						INode &theNode = myPort.Nodes(iNode);
+					// Get a reference to the node, to make accessing it easier
+					INode &theNode = myPort.Nodes(iNode);
 
-						msg.axis_number = iNode;
-						msg.position_reading = theNode.Motion.PosnMeasured.Value()/COUNTS_PER_REV;
-						msg.velocity_reading = theNode.Motion.VelMeasured.Value()/COUNTS_PER_REV;
-						msg.torque_reading = theNode.Motion.TrqMeasured.Value();
+					msg.axis_number = iNode;
+					msg.position_reading = theNode.Motion.PosnMeasured.Value() / COUNTS_PER_REV;
+					msg.velocity_reading = theNode.Motion.VelMeasured.Value() / COUNTS_PER_REV;
+					msg.torque_reading = theNode.Motion.TrqMeasured.Value();
 
-						status_pub_->publish(msg);
-					}
+					status_pub_->publish(msg);
 				}
 			}
 		}

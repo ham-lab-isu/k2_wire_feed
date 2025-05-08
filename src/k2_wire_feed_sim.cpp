@@ -11,16 +11,18 @@ using WireFeed = k2_action::action::WireFeed;
 
 class WireFeedSimServer : public rclcpp::Node {
 public:
-    WireFeedSimServer() : Node("wire_feed_sim_node") {
+    WireFeedSimServer() : Node("teknic_node_sim") {
         RCLCPP_INFO(this->get_logger(), "Starting Simulated Wire Feed Action Server...");
 
         distance_server_ = rclcpp_action::create_server<WireFeed>(
             this,
-            "wire_feed_commands",
+            "/wire_feed_commands",
             std::bind(&WireFeedSimServer::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
             std::bind(&WireFeedSimServer::handle_cancel, this, std::placeholders::_1),
             std::bind(&WireFeedSimServer::handle_accepted, this, std::placeholders::_1)
         );
+
+        RCLCPP_INFO(this->get_logger(), "Action server is running! Attempting to boot the feedback publisher");
 
         status_pub_ = this->create_publisher<k2_action::msg::WireFeedStatus>("motion_feedback", 10);
         // create the safety status publisher timer with callback
@@ -28,6 +30,7 @@ public:
             std::chrono::milliseconds(100),
             std::bind(&WireFeedSimServer::publish_status, this)
         );
+        RCLCPP_INFO(this->get_logger(), "Wire feed publisher is also active. All systems go.");
     }
 
 private:
@@ -124,35 +127,33 @@ private:
         }
     }
 
-    void publish_status(){
-        while(rclcpp::ok){
-            for (size_t iPort = 0; iPort < 1; iPort++){
-                // loop through the ports
-                for (unsigned iNode = 0; iNode < 4; iNode++) {
-                    k2_action::msg::WireFeedStatus msg;
-                    msg.axis_number = iNode;
-                    msg.position_reading = iNode * iPort;
-                    msg.velocity_reading = iNode * iPort;
-                    msg.torque_reading = torque_value_;
-                
-                    status_pub_->publish(msg);
+    void publish_status() {
+        for (size_t iPort = 0; iPort < 1; iPort++) {
+            // loop through the ports
+            for (unsigned iNode = 0; iNode < 4; iNode++) {
+                k2_action::msg::WireFeedStatus msg;
+                msg.axis_number = iNode;
+                msg.position_reading = iNode * iPort;
+                msg.velocity_reading = iNode * iPort;
+                msg.torque_reading = torque_value_;
+
+                status_pub_->publish(msg);
+            }
+
+            // After loop, update torque for next time
+            if (torque_increasing_) {
+                torque_value_ += 1.0;
+                if (torque_value_ >= 100.0) {
+                    torque_increasing_ = false;
                 }
-                
-                // After loop, update torque for next time
-                if (torque_increasing_) {
-                    torque_value_ += 1.0;
-                    if (torque_value_ >= 100.0) {
-                        torque_increasing_ = false;
-                    }
-                } else {
-                    torque_value_ -= 1.0;
-                    if (torque_value_ <= 0.0) {
-                        torque_increasing_ = true;
-                    }
-                }                
+            } else {
+                torque_value_ -= 1.0;
+                if (torque_value_ <= 0.0) {
+                    torque_increasing_ = true;
+                }
             }
         }
-    };
+    }
 };
 
 int main(int argc, char **argv) {

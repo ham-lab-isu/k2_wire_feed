@@ -195,7 +195,11 @@ class WireFeedDistanceServer : public rclcpp::Node {
 					IPort &myPort = myMgr->Ports(i);
 					RCLCPP_INFO(this->get_logger(), "Port [%d] is now defined", i);
 
+<<<<<<< HEAD
+					RCLCPP_INFO(this->get_logger(), " Port[%d]: state=%d, nodes=%d\n",
+=======
 					RCLCPP_INFO(this->get_logger(), "Port[%d]: state=%d, nodes=%d\n",
+>>>>>>> refs/remotes/origin/main
 						myPort.NetNumber(), myPort.OpenState(), myPort.NodeCount());
 				}
 			}
